@@ -232,11 +232,12 @@ pub fn verifier(state_accesses: ReadsAndWrites, prev_root: Root, witness: Witnes
             )],
         });
     }
-    let new_root = nomt::proof::verify_update::<Sha2Hasher>(prev_root, &updates)
-        .expect("update verification failed");
+
     if updates.is_empty() {
         prev_root
     } else {
+        let new_root = nomt::proof::verify_update::<Sha2Hasher>(prev_root, &updates)
+            .expect("update verification failed");
         new_root
     }
 }
