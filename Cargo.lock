@@ -561,7 +561,9 @@ dependencies = [
 name = "nomt-playground"
 version = "0.1.0"
 dependencies = [
+ "hex",
  "nomt",
+ "sha2",
  "tempfile",
 ]
 
