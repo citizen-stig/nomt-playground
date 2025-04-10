@@ -233,6 +233,11 @@ pub fn verifier(state_accesses: ReadsAndWrites, prev_root: Root, witness: Witnes
         });
     }
 
+    // This is failing because of terminator node returned
+    // nomt::proof::verify_update::<Sha2Hasher>(prev_root, &updates)
+    //     .expect("update verification failed")
+
+    // So doing this piece of logic to handle that.
     if updates.is_empty() {
         prev_root
     } else {
