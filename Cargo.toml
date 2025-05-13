@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 #nomt = { version = "1.0.0-preview", features = ["borsh", "sha2-hasher"] }
-nomt = { git = "https://github.com/citizen-stig/nomt.git", rev = "db745f5445b8d7d1b4997847287cb881be950d59", default-features = false, features = ["sha2-hasher", "borsh", "serde"] }
+nomt = { git = "https://github.com/citizen-stig/nomt.git", rev = "2381a9ff5d636e2b58d0ebc01af1fba870a01f90", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
+
+
 tempfile = "3.19.1"
 sha2 = "0.10.8"
 hex = "0.4.3"
