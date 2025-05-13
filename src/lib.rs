@@ -302,22 +302,82 @@ pub fn run_test_case(test_case: TestCase) {
         println!("prover root  : {}", hex::encode(prover_root));
         println!("verifier root: {}", hex::encode(verifier_root));
 
+        let overlay = finished_session.into_overlay();
+
+        overlay.commit(&nomt_container.nomt).unwrap();
+
         assert_eq!(
             verifier_root,
             prover_root.into_inner(),
             "verifier root does not match prover root"
         );
-        nomt_container.commit(finished_session);
-        println!("===== Round {} completed", idx + 1);
+        // nomt_container.commit(finished_session);
+        // println!("===== Round {} completed", idx + 1);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nomt::trie::KeyPath;
 
     #[test]
     fn test_single_node_rounds() {
         run_test_case(TestCase::rounds_of_same_key());
+    }
+
+    fn commit_session(
+        session: Session<Sha2Hasher>,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+    ) -> FinishedSession {
+        let key_path = sha2::Sha256::digest(&key).into();
+        session.warm_up(key_path);
+        let accesses = vec![(key_path, nomt::KeyReadWrite::Write(value))];
+        session.finish(accesses).expect("finish failed")
+    }
+
+    /// A -> B
+    ///  \-> C
+    #[test]
+    fn test_overlays() {
+        let nomt_container = NomtContainer::new();
+        let key_a = b"key_a".to_vec();
+        let key_path: KeyPath = sha2::Sha256::digest(&key_a).into();
+        let value_a = b"value_a".to_vec();
+        let value_b = b"value_b".to_vec();
+        let value_c = b"value_c".to_vec();
+
+        let session_a = nomt_container.session();
+        let finished_a = commit_session(session_a, key_a.clone(), Some(value_a.clone()));
+        let overlay_a = finished_a.into_overlay();
+        overlay_a.commit(&nomt_container.nomt).unwrap();
+
+        let session_b = nomt_container.nomt.begin_session(
+            SessionParams::default()
+                .witness_mode(WitnessMode::read_write())
+                .overlay(vec![])
+                .unwrap(),
+        );
+        let session_c = nomt_container.nomt.begin_session(
+            SessionParams::default()
+                .witness_mode(WitnessMode::read_write())
+                .overlay(vec![])
+                .unwrap(),
+        );
+
+        let val_b = session_b.read(key_path).unwrap();
+        let val_c = session_c.read(key_path).unwrap();
+        assert_eq!(val_b, val_c);
+
+        let finished_b = commit_session(session_b, key_a.clone(), Some(value_b.clone()));
+        let overlay_b = finished_b.into_overlay();
+
+        overlay_b.commit(&nomt_container.nomt).unwrap();
+
+        let x = session_c.read(key_path).unwrap();
+        println!("x: {:?}", x);
+        let finished_c = commit_session(session_c, key_a.clone(), Some(value_c.clone()));
+        drop(finished_c);
     }
 }
