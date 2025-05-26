@@ -373,7 +373,7 @@ mod tests {
         let finished_b = commit_session(session_b, key_a.clone(), Some(value_b.clone()));
         let overlay_b = finished_b.into_overlay();
 
-        let handle = std::thread::spawn(move || {
+        let _handle = std::thread::spawn(move || {
             println!("SLEEPING");
             std::thread::sleep(std::time::Duration::from_secs(10));
             let x = session_c.read(key_path).unwrap();
@@ -389,5 +389,35 @@ mod tests {
 
         // handle.join().expect("thread panicked");
         println!("COMPLETED");
+    }
+
+    #[test]
+    fn test_get_merkle_proof() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.commit_concurrency(1);
+
+        let key = b"key".to_vec();
+        let key_path: KeyPath = sha2::Sha256::digest(&key).into();
+        let value_1 = b"value_1".to_vec();
+
+        let nomt = Nomt::<Sha2Hasher>::open(opts).unwrap();
+
+        let session =
+            nomt.begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+        session.warm_up(key_path);
+        let accesses = vec![(key_path, nomt::KeyReadWrite::Write(Some(value_1.clone())))];
+        let finished_session = session.finish(accesses).expect("finish failed");
+
+        finished_session.commit(&nomt).unwrap();
+
+        let session =
+            nomt.begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+
+        let v2 = session.read(key_path).unwrap();
+        assert_eq!(v2, Some(value_1));
+        let _root = session.prev_root();
+        // How to get merkle proof, that this value is included in `prev_root`, without finishing the session?
     }
 }
