@@ -373,11 +373,21 @@ mod tests {
         let finished_b = commit_session(session_b, key_a.clone(), Some(value_b.clone()));
         let overlay_b = finished_b.into_overlay();
 
-        overlay_b.commit(&nomt_container.nomt).unwrap();
+        let handle = std::thread::spawn(move || {
+            println!("SLEEPING");
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            let x = session_c.read(key_path).unwrap();
+            println!("x: {:?}", x);
+            let _finished_c = commit_session(session_c, key_a.clone(), Some(value_c.clone()));
+            println!("FINISHED C: {:?}", _finished_c.root());
+            panic!("OOOPS");
+        });
 
-        let x = session_c.read(key_path).unwrap();
-        println!("x: {:?}", x);
-        let finished_c = commit_session(session_c, key_a.clone(), Some(value_c.clone()));
-        drop(finished_c);
+        println!("COMMITING");
+        overlay_b.commit(&nomt_container.nomt).unwrap();
+        println!("COMMITED");
+
+        // handle.join().expect("thread panicked");
+        println!("COMPLETED");
     }
 }
