@@ -319,7 +319,9 @@ pub fn run_test_case(test_case: TestCase) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nomt::Overlay;
     use nomt::trie::KeyPath;
+    use std::collections::VecDeque;
 
     #[test]
     fn test_single_node_rounds() {
@@ -417,7 +419,7 @@ mod tests {
 
         let fetched_value = session.read(key_path).unwrap();
         assert_eq!(fetched_value, Some(value_1));
-        let root = session.prev_root();
+        let _root = session.prev_root();
         // How to get merkle proof, that this value is included in `prev_root`, without finishing the session?
         // Something like `VerifiedPathProof` for `key_path`,
         // let key_proof: VerifiedPathProof = session.read_with_proof(key_path).unwrap();
@@ -593,5 +595,96 @@ mod tests {
             let multi_proof = nomt::proof::MultiProof::from_path_proofs(path_proofs_inner);
             println!("P LEN {}", multi_proof.paths.len());
         }
+    }
+
+    #[test]
+    fn handling_web_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.commit_concurrency(1);
+        let nomt = Nomt::<Sha2Hasher>::open(opts).unwrap();
+
+        let key = b"key".to_vec();
+        let key_path: KeyPath = sha2::Sha256::digest(&key).into();
+
+        let blocks: u64 = 20;
+        let finality: u64 = 3;
+
+        let mut overlays = VecDeque::with_capacity(finality as usize);
+
+        let build_session = |current_overlays: &VecDeque<Overlay>| {
+            println!("Building session from {} overlays", current_overlays.len());
+            let params = SessionParams::default()
+                .overlay(current_overlays.iter().rev())
+                .unwrap()
+                .witness_mode(WitnessMode::read_write());
+            nomt.begin_session(params)
+        };
+
+        // This background task represents "web" storage, which works in the background to the main thread.
+        let web_session = build_session(&overlays);
+        let (web_session_sender, web_session_receiver) =
+            std::sync::mpsc::channel::<(Session<Sha2Hasher>, Option<Vec<u8>>)>();
+        let background_task_handle = std::thread::spawn(move || {
+            println!(
+                "Background task started: Listening for sequencer updates and shutdown signal."
+            );
+            let initial_value = web_session.read(key_path.clone()).unwrap();
+            assert_eq!(initial_value, None);
+            drop(web_session);
+            for _ in 0..blocks {
+                let (session, expected_value) = web_session_receiver.recv().unwrap();
+                println!("Web storage received");
+                let value = session.read(key_path).unwrap();
+                assert_eq!(expected_value, value);
+                println!("Web storage actual   value: {:?}", value);
+                println!("Web storage expected value: {:?}", expected_value);
+            }
+        });
+
+        // This loop represents the main execution thread.
+        for height in 0..blocks {
+            let session = build_session(&overlays);
+            session.warm_up(key_path);
+
+            let expected_value = height.checked_sub(1).map(|v| v.to_be_bytes().to_vec());
+            let actual_value = session.read(key_path).unwrap();
+            println!("Height {} Actual Value: {:?}", height, actual_value);
+            assert_eq!(actual_value, expected_value);
+
+            let written_value = Some(height.to_be_bytes().to_vec());
+            let accesses = vec![(key_path, nomt::KeyReadWrite::Write(written_value.clone()))];
+            let finished_session = session.finish(accesses).expect("finish failed");
+            overlays.push_back(finished_session.into_overlay());
+
+            // Build after committing
+            // let web_session = build_session(&overlays);
+            // web_session_sender
+            //     .send((web_session, written_value))
+            //     .unwrap();
+
+            if let Some(f_height) = height.checked_sub(finality) {
+                println!(
+                    "H {}:Finalizing overlay at supposed height {}",
+                    height, f_height
+                );
+                let oldest_overlay = overlays.pop_front().unwrap();
+                oldest_overlay.commit(&nomt).unwrap();
+                println!(
+                    "H {}: Overlays after finalization: {}",
+                    height,
+                    overlays.len()
+                );
+            }
+            // Build after committing
+            let web_session = build_session(&overlays);
+            web_session_sender
+                .send((web_session, written_value))
+                .unwrap();
+        }
+
+        background_task_handle.join().unwrap();
+        println!("Completed");
     }
 }
