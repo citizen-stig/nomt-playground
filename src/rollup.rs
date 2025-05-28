@@ -117,7 +117,7 @@ impl ClonableSession {
 
     fn ref_count(&self) {
         println!("Strong count: {}", Arc::strong_count(&self.session));
-        println!("Strong count: {}", Arc::weak_count(&self.session));
+        println!("Weak count: {}", Arc::weak_count(&self.session));
     }
 
     fn read(&self, key: KeyPath) -> Option<Vec<u8>> {
