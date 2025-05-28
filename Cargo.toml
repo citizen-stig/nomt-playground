@@ -11,6 +11,6 @@ nomt = { git = "https://github.com/thrumdev/nomt.git", rev = "51a2a3559b2a315324
 tempfile = "3.19.1"
 sha2 = "0.10.8"
 hex = "0.4.3"
+tokio = { version = "1.45.1", features = ["full"] }
 
 [dev-dependencies]
-tokio = { version = "1.45.1", features = ["full"] }
