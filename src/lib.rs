@@ -349,23 +349,23 @@ mod tests {
         let key_path: KeyPath = sha2::Sha256::digest(&key_a).into();
         let value_a = b"value_a".to_vec();
         let value_b = b"value_b".to_vec();
-        let value_c = b"value_c".to_vec();
 
         let session_a = nomt_container.session();
         let finished_a = commit_session(session_a, key_a.clone(), Some(value_a.clone()));
         let overlay_a = finished_a.into_overlay();
-        overlay_a.commit(&nomt_container.nomt).unwrap();
+        let mut overlays = vec![overlay_a];
+        // overlay_a.commit(&nomt_container.nomt).unwrap();
 
         let session_b = nomt_container.nomt.begin_session(
             SessionParams::default()
                 .witness_mode(WitnessMode::read_write())
-                .overlay(vec![])
+                .overlay(&overlays)
                 .unwrap(),
         );
         let session_c = nomt_container.nomt.begin_session(
             SessionParams::default()
                 .witness_mode(WitnessMode::read_write())
-                .overlay(vec![])
+                .overlay(&overlays)
                 .unwrap(),
         );
 
@@ -378,15 +378,22 @@ mod tests {
 
         let _handle = std::thread::spawn(move || {
             println!("SLEEPING");
-            std::thread::sleep(std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_secs(5));
             let x = session_c.read(key_path).unwrap();
             println!("x: {:?}", x);
-            let _finished_c = commit_session(session_c, key_a.clone(), Some(value_c.clone()));
-            println!("FINISHED C: {:?}", _finished_c.root());
-            panic!("OOOPS");
+            // let _finished_c = commit_session(session_c, key_a.clone(), Some(value_c.clone()));
+            // println!("FINISHED C: {:?}", _finished_c.root());
+            // panic!("OOOPS");
         });
 
-        println!("COMMITING");
+        println!("COMMITING A");
+        overlays
+            .pop()
+            .unwrap()
+            .commit(&nomt_container.nomt)
+            .unwrap();
+
+        println!("COMMITING B");
         overlay_b.commit(&nomt_container.nomt).unwrap();
         println!("COMMITED");
 
