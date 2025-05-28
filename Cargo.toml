@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 #nomt = { version = "1.0.0-preview", features = ["borsh", "sha2-hasher"] }
-nomt = { git = "https://github.com/citizen-stig/nomt.git", rev = "2381a9ff5d636e2b58d0ebc01af1fba870a01f90", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
+nomt = { git = "https://github.com/thrumdev/nomt.git", rev = "51a2a3559b2a3153244dda923daf7e38807a9427", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
 
 
 tempfile = "3.19.1"

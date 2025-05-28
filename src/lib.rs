@@ -415,9 +415,183 @@ mod tests {
         let session =
             nomt.begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
 
-        let v2 = session.read(key_path).unwrap();
-        assert_eq!(v2, Some(value_1));
-        let _root = session.prev_root();
+        let fetched_value = session.read(key_path).unwrap();
+        assert_eq!(fetched_value, Some(value_1));
+        let root = session.prev_root();
         // How to get merkle proof, that this value is included in `prev_root`, without finishing the session?
+        // Something like `VerifiedPathProof` for `key_path`,
+        // let key_proof: VerifiedPathProof = session.read_with_proof(key_path).unwrap();
+        // assert!(key_proof.confirm_value(&nomt::trie::LeafData {
+        //     key_path,
+        //     value_hash: sha2::Sha256::digest(&value_1).into(),
+        // }));
+    }
+
+    #[test]
+    fn multi_proof_without_writes() {
+        let mut opts = Options::new();
+        // Changing this to 1 fixes the issue
+        opts.commit_concurrency(2);
+        opts.path("user_nomt_db");
+
+        let nomt = Nomt::<Sha2Hasher>::open(opts).unwrap();
+        let key1: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 99, 104, 97, 105, 110, 95, 115, 116, 97, 116, 101, 47, 67, 104, 97,
+            105, 110, 83, 116, 97, 116, 101, 47, 99, 117, 114, 114, 101, 110, 116, 95, 104, 101,
+            105, 103, 104, 116, 115, 47,
+        ])
+        .into();
+        let key2: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 115, 101, 113, 117, 101, 110, 99, 101, 114, 95, 114, 101, 103, 105,
+            115, 116, 114, 121, 47, 83, 101, 113, 117, 101, 110, 99, 101, 114, 82, 101, 103, 105,
+            115, 116, 114, 121, 47, 112, 114, 101, 102, 101, 114, 114, 101, 100, 95, 115, 101, 113,
+            117, 101, 110, 99, 101, 114, 47,
+        ])
+        .into();
+        let key3: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 99, 104, 97, 105, 110, 95, 115, 116, 97, 116, 101, 47, 67, 104, 97,
+            105, 110, 83, 116, 97, 116, 101, 47, 115, 108, 111, 116, 95, 110, 117, 109, 98, 101,
+            114, 95, 104, 105, 115, 116, 111, 114, 121, 47, 0, 0, 0, 0, 0, 0, 0, 0,
+        ])
+        .into();
+
+        let rounds = vec![vec![
+            (
+                key1.clone(),
+                nomt::KeyReadWrite::Read(Some(vec![
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                ])),
+            ),
+            (
+                key2.clone(),
+                nomt::KeyReadWrite::Read(Some(vec![
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0,
+                ])),
+            ),
+            (
+                key3.clone(),
+                nomt::KeyReadWrite::Read(Some(vec![0, 0, 0, 0, 0, 0, 0, 0])),
+            ),
+        ]];
+
+        for nomt_accesses in rounds {
+            println!("ACCESSES: {:?}", nomt_accesses);
+            let session = nomt
+                .begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+            for (k, v) in &nomt_accesses {
+                session.warm_up(k.clone());
+                let val = session.read(k.clone()).unwrap();
+                println!("ACTUAL VALUE: {:?}, EXPECTED VALUE {:?}", val, v);
+            }
+
+            let mut finished = session.finish(nomt_accesses).unwrap();
+            let nomt_witness = finished.take_witness().expect("Witness cannot be missing");
+            let nomt::Witness {
+                path_proofs,
+                operations: nomt::WitnessedOperations { .. },
+            } = nomt_witness;
+            // Note, we discard `p.path`, but maybe there's a way to use to have more efficient verification?
+            let path_proofs_inner = path_proofs.into_iter().map(|p| p.inner).collect::<Vec<_>>();
+            let multi_proof = nomt::proof::MultiProof::from_path_proofs(path_proofs_inner);
+            println!("P LEN {}", multi_proof.paths.len());
+        }
+    }
+
+    #[test]
+    fn multi_proof_without_writes_2() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.commit_concurrency(2);
+        opts.prepopulate_page_cache(true);
+        // opts.path("user_nomt_db");
+
+        let nomt = Nomt::<Sha2Hasher>::open(opts).unwrap();
+        let key1: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 99, 104, 97, 105, 110, 95, 115, 116, 97, 116, 101, 47, 67, 104, 97,
+            105, 110, 83, 116, 97, 116, 101, 47, 99, 117, 114, 114, 101, 110, 116, 95, 104, 101,
+            105, 103, 104, 116, 115, 47,
+        ])
+        .into();
+        let key2: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 115, 101, 113, 117, 101, 110, 99, 101, 114, 95, 114, 101, 103, 105,
+            115, 116, 114, 121, 47, 83, 101, 113, 117, 101, 110, 99, 101, 114, 82, 101, 103, 105,
+            115, 116, 114, 121, 47, 112, 114, 101, 102, 101, 114, 114, 101, 100, 95, 115, 101, 113,
+            117, 101, 110, 99, 101, 114, 47,
+        ])
+        .into();
+        let key3: KeyPath = sha2::Sha256::digest([
+            115, 111, 118, 95, 99, 104, 97, 105, 110, 95, 115, 116, 97, 116, 101, 47, 67, 104, 97,
+            105, 110, 83, 116, 97, 116, 101, 47, 115, 108, 111, 116, 95, 110, 117, 109, 98, 101,
+            114, 95, 104, 105, 115, 116, 111, 114, 121, 47, 0, 0, 0, 0, 0, 0, 0, 0,
+        ])
+        .into();
+
+        let rounds = vec![
+            // First round,
+            vec![
+                (
+                    key1.clone(),
+                    nomt::KeyReadWrite::ReadThenWrite(
+                        None,
+                        Some(vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    ),
+                ),
+                (
+                    key2.clone(),
+                    nomt::KeyReadWrite::Write(Some(vec![
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0,
+                    ])),
+                ),
+                (
+                    key3.clone(),
+                    nomt::KeyReadWrite::Write(Some(vec![0, 0, 0, 0, 0, 0, 0, 0])),
+                ),
+            ],
+            // Second round,
+            vec![
+                (
+                    key1.clone(),
+                    nomt::KeyReadWrite::Read(Some(vec![
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    ])),
+                ),
+                (
+                    key2.clone(),
+                    nomt::KeyReadWrite::Read(Some(vec![
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0,
+                    ])),
+                ),
+                (
+                    key3.clone(),
+                    nomt::KeyReadWrite::Read(Some(vec![0, 0, 0, 0, 0, 0, 0, 0])),
+                ),
+            ],
+        ];
+
+        for nomt_accesses in rounds {
+            println!("ACCESSES: {:?}", nomt_accesses);
+            let session = nomt
+                .begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+            for (k, v) in &nomt_accesses {
+                session.warm_up(k.clone());
+                let val = session.read(k.clone()).unwrap();
+                println!("ACTUAL VALUE: {:?}, EXPECTED VALUE {:?}", val, v);
+            }
+
+            let mut finished = session.finish(nomt_accesses).unwrap();
+            let nomt_witness = finished.take_witness().expect("Witness cannot be missing");
+            let nomt::Witness {
+                path_proofs,
+                operations: nomt::WitnessedOperations { .. },
+            } = nomt_witness;
+            // Note, we discard `p.path`, but maybe there's a way to use to have more efficient verification?
+            let path_proofs_inner = path_proofs.into_iter().map(|p| p.inner).collect::<Vec<_>>();
+            let multi_proof = nomt::proof::MultiProof::from_path_proofs(path_proofs_inner);
+            println!("P LEN {}", multi_proof.paths.len());
+        }
     }
 }
