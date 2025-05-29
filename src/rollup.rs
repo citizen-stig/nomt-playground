@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use nomt::hasher::Sha2Hasher;
 use nomt::trie::KeyPath;
 use nomt::{
@@ -40,7 +41,6 @@ fn handling_web_thread() {
         println!("Background task started: Listening for sequencer updates and shutdown signal.");
         let initial_value = web_session.read(key_path.clone()).unwrap();
         assert_eq!(initial_value, None);
-        drop(web_session);
         for _ in 0..blocks {
             let (session, expected_value) = web_session_receiver.recv().unwrap();
             web_session = session;
@@ -100,6 +100,37 @@ fn handling_web_thread() {
 #[derive(Clone)]
 struct ClonableSession {
     session: Arc<Mutex<Option<Session<Sha2Hasher>>>>,
+}
+
+#[derive(Clone)]
+struct SessionBuilder {
+    overlays: Vec<Arc<Overlay>>,
+    nomt: Arc<Nomt<Sha2Hasher>>,
+}
+
+impl SessionBuilder {
+    pub fn new_session(&self) -> Session<Sha2Hasher> {
+        let params = SessionParams::default()
+            .overlay(self.overlays.iter().map(|a| a.as_ref()))
+            .unwrap()
+            .witness_mode(WitnessMode::read_write());
+        self.nomt.begin_session(params)
+    }
+}
+
+struct ProverProtoDesign {
+    current_session: Session<Sha2Hasher>,
+    builder: SessionBuilder,
+}
+
+impl Clone for ProverProtoDesign {
+    fn clone(&self) -> Self {
+        let new_session = self.builder.new_session();
+        Self {
+            current_session: new_session,
+            builder: self.builder.clone(),
+        }
+    }
 }
 
 impl ClonableSession {

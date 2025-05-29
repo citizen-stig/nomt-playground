@@ -322,7 +322,11 @@ pub fn run_test_case(test_case: TestCase) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nomt::Overlay;
+    use nomt::hasher::BinaryHasher;
     use nomt::trie::KeyPath;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
 
     #[test]
     fn test_single_node_rounds() {
@@ -602,6 +606,105 @@ mod tests {
             let path_proofs_inner = path_proofs.into_iter().map(|p| p.inner).collect::<Vec<_>>();
             let multi_proof = nomt::proof::MultiProof::from_path_proofs(path_proofs_inner);
             println!("P LEN {}", multi_proof.paths.len());
+        }
+    }
+
+    type H = sha2::Sha256;
+
+    fn from_key(key: u64) -> (nomt::trie::KeyPath, Option<Vec<u8>>) {
+        let raw_data = key.to_be_bytes();
+        let key_path: nomt::trie::KeyPath = H::digest(&raw_data).into();
+        (key_path, Some(raw_data.to_vec()))
+    }
+
+    struct NomtSessionBuilder {
+        nomt: Arc<Nomt<BinaryHasher<H>>>,
+        overlay_refs: Vec<u64>,
+        snapshots: Arc<RwLock<HashMap<u64, nomt::Overlay>>>,
+    }
+
+    impl NomtSessionBuilder {
+        fn begin_session(&self) -> Session<BinaryHasher<H>> {
+            let params = {
+                let mut overlays = Vec::with_capacity(self.overlay_refs.len());
+                let snapshots = self.snapshots.read().expect("Snapshots lock poisoned");
+                for overlay_ref in &self.overlay_refs {
+                    let Some(state_overlay) = snapshots.get(overlay_ref) else {
+                        println!(
+                            "Cannot find snapshot from reference, assuming it has been committed"
+                        );
+                        continue;
+                    };
+                    overlays.push(state_overlay);
+                }
+                SessionParams::default()
+                    .overlay(overlays)
+                    .expect("Failed to build session params")
+                    .witness_mode(WitnessMode::read_write())
+            };
+            self.nomt.begin_session(params)
+        }
+    }
+
+    #[test]
+    fn overlays_with_session_builder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.commit_concurrency(1);
+
+        let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
+
+        let all_overlays: HashMap<u64, Overlay> = HashMap::new();
+        let all_overlays = Arc::new(RwLock::new(all_overlays));
+        let rounds = 10;
+
+        // First, build some overlays with data.
+        for this_ref in 0..rounds {
+            let mut overlay_refs = (0..this_ref).collect::<Vec<_>>();
+            overlay_refs.reverse();
+            let builder = NomtSessionBuilder {
+                nomt: nomt.clone(),
+                overlay_refs,
+                snapshots: all_overlays.clone(),
+            };
+
+            let (key_path, data) = from_key(this_ref);
+            let writes = vec![(key_path, nomt::KeyReadWrite::Write(data))];
+
+            let session = builder.begin_session();
+
+            let finished_session = session.finish(writes.clone()).unwrap();
+            let overlay = finished_session.into_overlay();
+            let mut overlays = all_overlays.write().unwrap();
+            overlays.insert(this_ref, overlay);
+        }
+
+        let mut overlay_refs = (0..rounds).collect::<Vec<_>>();
+        overlay_refs.reverse();
+        let validator = NomtSessionBuilder {
+            nomt: nomt.clone(),
+            overlay_refs,
+            snapshots: all_overlays.clone(),
+        };
+
+        for commiting_ref in 0..rounds {
+            let validator_session = validator.begin_session();
+
+            for checking_ref in 0..rounds {
+                println!(
+                    "Checking ref: {} At before commiting {}",
+                    checking_ref, commiting_ref
+                );
+                let (key_path, expected_value) = from_key(checking_ref);
+                let actual_value = validator_session.read(key_path).unwrap();
+                assert_eq!(actual_value, expected_value);
+            }
+
+            let mut overlays = all_overlays.write().unwrap();
+            let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
+            drop(validator_session);
+            overlay_to_commit.commit(&nomt).unwrap();
         }
     }
 }
