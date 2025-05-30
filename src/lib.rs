@@ -322,9 +322,10 @@ pub fn run_test_case(test_case: TestCase) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nomt::Overlay;
     use nomt::hasher::BinaryHasher;
-    use nomt::trie::KeyPath;
+    use nomt::trie::{KeyPath, LeafData};
+    use nomt::{KeyReadWrite, Overlay, proof};
+    use sha2::Sha256;
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
 
@@ -631,7 +632,8 @@ mod tests {
                 for overlay_ref in &self.overlay_refs {
                     let Some(state_overlay) = snapshots.get(overlay_ref) else {
                         println!(
-                            "Cannot find snapshot from reference, assuming it has been committed"
+                            "Cannot find snapshot from reference {}, assuming it has been committed",
+                            overlay_ref,
                         );
                         continue;
                     };
@@ -652,7 +654,6 @@ mod tests {
         let mut opts = Options::new();
         opts.path(dir.path().join("nomt_db"));
         opts.commit_concurrency(1);
-
         let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
 
         let all_overlays: HashMap<u64, Overlay> = HashMap::new();
@@ -705,6 +706,108 @@ mod tests {
             let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
             drop(validator_session);
             overlay_to_commit.commit(&nomt).unwrap();
+        }
+    }
+
+    #[test]
+    fn random_read_no_impact() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.commit_concurrency(1);
+        let nomt = Nomt::<BinaryHasher<H>>::open(opts).unwrap();
+
+        let key = b"key".to_vec();
+        let key_path: KeyPath = sha2::Sha256::digest(&key).into();
+        let value_1 = b"value_1".to_vec();
+        // let value_1_hash = sha2::Sha256::digest(&value_1);
+        let value_2 = b"value_2".to_vec();
+        // let value_2_hash = sha2::Sha256::digest(&value_1);
+
+        let writes = vec![value_1, value_2];
+
+        for write in writes {
+            let prev_root = nomt.root();
+            // Building session
+            let session = nomt
+                .begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+            session.warm_up(key_path);
+
+            let actual_access: Vec<_> = vec![(
+                key_path,
+                // ADDING SOME RANDOM BYTES =)
+                KeyReadWrite::ReadThenWrite(Some(vec![255, 255, 1, 2]), Some(write.clone())),
+            )];
+
+            let mut finished = session.finish(actual_access).unwrap();
+            let witness = finished.take_witness().unwrap();
+            let new_root = finished.root();
+            finished.commit(&nomt).unwrap();
+
+            // Verifying
+            // Copied from examples
+            let mut updates = Vec::new();
+            // A witness is composed of multiple WitnessedPath objects,
+            // which stores all the necessary information to verify the operations
+            // performed on the same path
+            for (i, witnessed_path) in witness.path_proofs.iter().enumerate() {
+                // Constructing the verified operations
+                let verified = witnessed_path
+                    .inner
+                    .verify::<BinaryHasher<Sha256>>(
+                        &witnessed_path.path.path(),
+                        prev_root.into_inner(),
+                    )
+                    .unwrap();
+
+                for read in witness
+                    .operations
+                    .reads
+                    .iter()
+                    .skip_while(|r| r.path_index != i)
+                    .take_while(|r| r.path_index == i)
+                {
+                    match read.value {
+                        // Check for non-existence if the return value was None
+                        None => assert!(verified.confirm_nonexistence(&read.key).unwrap()),
+                        // Verify the correctness of the returned value when it is Some(_)
+                        Some(value_hash) => {
+                            let leaf = LeafData {
+                                key_path: read.key,
+                                value_hash,
+                            };
+                            assert!(verified.confirm_value(&leaf).unwrap());
+                        }
+                    }
+                }
+
+                let mut write_ops = Vec::new();
+                for write in witness
+                    .operations
+                    .writes
+                    .iter()
+                    .skip_while(|r| r.path_index != i)
+                    .take_while(|r| r.path_index == i)
+                {
+                    write_ops.push((write.key, write.value));
+                }
+
+                if !write_ops.is_empty() {
+                    updates.push(proof::PathUpdate {
+                        inner: verified,
+                        ops: write_ops,
+                    });
+                }
+            }
+
+            assert_eq!(
+                proof::verify_update::<BinaryHasher<sha2::Sha256>>(
+                    prev_root.into_inner(),
+                    &updates
+                )
+                .unwrap(),
+                new_root.into_inner(),
+            );
         }
     }
 }
