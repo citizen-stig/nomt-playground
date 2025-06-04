@@ -653,6 +653,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut opts = Options::new();
         opts.path(dir.path().join("nomt_db"));
+        opts.rollback(true);
+        opts.max_rollback_log_len(1);
         opts.commit_concurrency(1);
         let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
 
@@ -707,6 +709,87 @@ mod tests {
             drop(validator_session);
             overlay_to_commit.commit(&nomt).unwrap();
         }
+    }
+
+    #[test]
+    fn overlays_with_session_builder_concurrent_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.path(dir.path().join("nomt_db"));
+        opts.rollback(true);
+        opts.max_rollback_log_len(1);
+        let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
+
+        let all_overlays: HashMap<u64, Overlay> = HashMap::new();
+        let all_overlays = Arc::new(RwLock::new(all_overlays));
+        let overlays_count = 100;
+        let parallel_readers = 10;
+        let read_rounds = 1000;
+
+        for this_ref in 0..overlays_count {
+            let mut overlay_refs = (0..this_ref).collect::<Vec<_>>();
+            overlay_refs.reverse();
+            let builder = NomtSessionBuilder {
+                nomt: nomt.clone(),
+                overlay_refs,
+                snapshots: all_overlays.clone(),
+            };
+
+            let (key_path, data) = from_key(this_ref);
+            let writes = vec![(key_path, nomt::KeyReadWrite::Write(data))];
+
+            let session = builder.begin_session();
+
+            let finished_session = session.finish(writes.clone()).unwrap();
+            let overlay = finished_session.into_overlay();
+            let mut overlays = all_overlays.write().unwrap();
+            overlays.insert(this_ref, overlay);
+        }
+
+        let mut handles = Vec::with_capacity(parallel_readers);
+
+        for id in 0..parallel_readers {
+            let reader_overlays = all_overlays.clone();
+            let mut reader_refs = (0..overlays_count).collect::<Vec<_>>();
+            reader_refs.reverse();
+
+            let nomt_clone = nomt.clone();
+            let handle = std::thread::spawn(move || {
+                let reader = NomtSessionBuilder {
+                    nomt: nomt_clone,
+                    overlay_refs: reader_refs,
+                    snapshots: reader_overlays,
+                };
+                let expected_values = (0..overlays_count).map(from_key).collect::<Vec<_>>();
+                let start = std::time::Instant::now();
+                println!("reader {} starts reading", id);
+                // Check every value multiple times
+                for _ in 0..read_rounds {
+                    let session = reader.begin_session();
+                    for (key_path, expected_value) in &expected_values {
+                        let actual_value = session.read(*key_path).unwrap();
+                        assert_eq!(&actual_value, expected_value);
+                    }
+                }
+                println!("reader {} ends reading, took {:?}", id, start.elapsed());
+            });
+
+            handles.push(handle);
+        }
+        println!("Readers spawned, commiting");
+
+        for commiting_ref in 0..(overlays_count - 1) {
+            let mut overlays = all_overlays.write().unwrap();
+            let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
+            drop(overlays);
+            overlay_to_commit.commit(&nomt).unwrap();
+        }
+        println!("Commiting done");
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        println!("All readers joined");
     }
 
     #[test]
