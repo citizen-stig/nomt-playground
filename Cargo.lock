@@ -533,7 +533,7 @@ dependencies = [
 [[package]]
 name = "nomt"
 version = "1.0.0-preview"
-source = "git+https://github.com/thrumdev/nomt.git?rev=51a2a3559b2a3153244dda923daf7e38807a9427#51a2a3559b2a3153244dda923daf7e38807a9427"
+source = "git+https://github.com/thrumdev/nomt.git?rev=9965ee64b29c2195bb288bb4ea00696e676c6437#9965ee64b29c2195bb288bb4ea00696e676c6437"
 dependencies = [
  "ahash",
  "anyhow",
@@ -562,7 +562,7 @@ dependencies = [
 [[package]]
 name = "nomt-core"
 version = "1.0.0-preview"
-source = "git+https://github.com/thrumdev/nomt.git?rev=51a2a3559b2a3153244dda923daf7e38807a9427#51a2a3559b2a3153244dda923daf7e38807a9427"
+source = "git+https://github.com/thrumdev/nomt.git?rev=9965ee64b29c2195bb288bb4ea00696e676c6437#9965ee64b29c2195bb288bb4ea00696e676c6437"
 dependencies = [
  "arrayvec",
  "bitvec",

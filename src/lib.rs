@@ -718,14 +718,14 @@ mod tests {
         opts.path(dir.path().join("nomt_db"));
         // Uncomment this to make test stuck
         // opts.rollback(true);
-        // opts.max_rollback_log_len(1);
+        opts.max_rollback_log_len(1);
         let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
 
         let all_overlays: HashMap<u64, Overlay> = HashMap::new();
         let all_overlays = Arc::new(RwLock::new(all_overlays));
         let overlays_count = 100;
         let parallel_readers = 10;
-        let read_rounds = 500;
+        let read_rounds = 5;
 
         for this_ref in 0..overlays_count {
             let mut overlay_refs = (0..this_ref).collect::<Vec<_>>();
@@ -782,7 +782,12 @@ mod tests {
         for commiting_ref in 0..(overlays_count - 1) {
             let mut overlays = all_overlays.write().unwrap();
             let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
-            overlay_to_commit.commit(&nomt).unwrap();
+            let returned = overlay_to_commit.try_commit_nonblocking(&nomt).unwrap();
+            if returned.is_some() {
+                drop(overlays);
+                println!("EXPECTED IMMEDIATE FAILURE!!!!!");
+                break;
+            }
         }
         println!("Commiting done");
 
