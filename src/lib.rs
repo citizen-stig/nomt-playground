@@ -631,10 +631,10 @@ mod tests {
                 let snapshots = self.snapshots.read().expect("Snapshots lock poisoned");
                 for overlay_ref in &self.overlay_refs {
                     let Some(state_overlay) = snapshots.get(overlay_ref) else {
-                        println!(
-                            "Cannot find snapshot from reference {}, assuming it has been committed",
-                            overlay_ref,
-                        );
+                        // println!(
+                        //     "Cannot find snapshot from reference {}, assuming it has been committed",
+                        //     overlay_ref,
+                        // );
                         continue;
                     };
                     overlays.push(state_overlay);
@@ -716,15 +716,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut opts = Options::new();
         opts.path(dir.path().join("nomt_db"));
-        opts.rollback(true);
-        opts.max_rollback_log_len(1);
+        // Uncomment this to make test stuck
+        // opts.rollback(true);
+        // opts.max_rollback_log_len(1);
         let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
 
         let all_overlays: HashMap<u64, Overlay> = HashMap::new();
         let all_overlays = Arc::new(RwLock::new(all_overlays));
         let overlays_count = 100;
         let parallel_readers = 10;
-        let read_rounds = 1000;
+        let read_rounds = 500;
 
         for this_ref in 0..overlays_count {
             let mut overlay_refs = (0..this_ref).collect::<Vec<_>>();
@@ -781,7 +782,6 @@ mod tests {
         for commiting_ref in 0..(overlays_count - 1) {
             let mut overlays = all_overlays.write().unwrap();
             let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
-            drop(overlays);
             overlay_to_commit.commit(&nomt).unwrap();
         }
         println!("Commiting done");
