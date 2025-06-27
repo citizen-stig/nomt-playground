@@ -717,7 +717,7 @@ mod tests {
         let mut opts = Options::new();
         opts.path(dir.path().join("nomt_db"));
         // Uncomment this to make test stuck
-        // opts.rollback(true);
+        opts.rollback(true);
         opts.max_rollback_log_len(1);
         let nomt = std::sync::Arc::new(Nomt::<BinaryHasher<H>>::open(opts).unwrap());
 
@@ -782,12 +782,13 @@ mod tests {
         for commiting_ref in 0..(overlays_count - 1) {
             let mut overlays = all_overlays.write().unwrap();
             let overlay_to_commit = overlays.remove(&commiting_ref).unwrap();
-            let returned = overlay_to_commit.try_commit_nonblocking(&nomt).unwrap();
-            if returned.is_some() {
-                drop(overlays);
-                println!("EXPECTED IMMEDIATE FAILURE!!!!!");
-                break;
-            }
+            overlay_to_commit.commit(&nomt).unwrap();
+            // let returned = overlay_to_commit.try_commit_nonblocking(&nomt).unwrap();
+            // if returned.is_some() {
+            //     drop(overlays);
+            //     println!("EXPECTED IMMEDIATE FAILURE!!!!!");
+            //     break;
+            // }
         }
         println!("Commiting done");
 
@@ -897,5 +898,65 @@ mod tests {
                 new_root.into_inner(),
             );
         }
+    }
+
+    #[test]
+    fn test_commit_is_not_leaking_new_data_to_existing_sessions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut opts = Options::new();
+        opts.commit_concurrency(6);
+        opts.path(dir.path().join("nomt_db"));
+
+        let key = b"key".to_vec();
+        let key_path: KeyPath = sha2::Sha256::digest(&key).into();
+        let value_1 = b"value_1".to_vec();
+        let value_2 = b"value_1".to_vec();
+
+        let nomt = Nomt::<Sha2Hasher>::open(opts).unwrap();
+
+        // Commit some data
+        {
+            let session = nomt
+                .begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+            session.warm_up(key_path);
+            let accesses = vec![(key_path, nomt::KeyReadWrite::Write(Some(value_1.clone())))];
+            let finished_session = session.finish(accesses).expect("finish failed");
+
+            finished_session.commit(&nomt).unwrap();
+        }
+
+        // Build 2 sessions
+        let checker_session =
+            nomt.begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+        let orig_prev_root = checker_session.prev_root();
+        let writer_session =
+            nomt.begin_session(SessionParams::default().witness_mode(WitnessMode::read_write()));
+        let orig_prev_root_verify = writer_session.prev_root();
+        assert_eq!(orig_prev_root, orig_prev_root_verify);
+
+        let handle = std::thread::spawn(move || {
+            let run_for = std::time::Duration::from_secs(10);
+            let start = std::time::Instant::now();
+            let mut checks = 0;
+
+            while start.elapsed() < run_for {
+                let current_prev_root = checker_session.prev_root();
+                assert_eq!(current_prev_root, orig_prev_root);
+                checks += 1;
+                let value = checker_session.read(key_path).unwrap().unwrap();
+                assert_eq!(value, value_1);
+            }
+            println!("Checks done: {}", checks);
+        });
+
+        let accesses = vec![(key_path, nomt::KeyReadWrite::Write(Some(value_2.clone())))];
+        let finished_session = writer_session.finish(accesses).expect("finish failed");
+
+        println!("Trying to commit: {:?}", std::time::Instant::now());
+        finished_session.commit(&nomt).unwrap();
+        println!("Commited: {:?}", std::time::Instant::now());
+
+        let result = handle.join();
+        assert!(result.is_ok());
     }
 }
