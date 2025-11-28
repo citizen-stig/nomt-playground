@@ -15,6 +15,7 @@ tokio = { version = "1.45.1", features = ["full"] }
 tracing = { version = "0.1.43" }
 rand = { version = "0.9.2" }
 tracing-subscriber = { version = "0.3.22" }
+clap = { version = "4", features = ["derive"] }
 
 [[bin]]
 name = "rollup_emulator"

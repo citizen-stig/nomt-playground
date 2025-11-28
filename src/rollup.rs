@@ -75,8 +75,12 @@ impl<H> StorageManager<H>
 where
     H: digest::Digest<OutputSize = digest::typenum::U32> + Send + Sync,
 {
-    pub fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+    pub fn new(temp_in: Option<String>) -> Self {
+        let dir = match temp_in {
+            None => tempfile::tempdir().unwrap(),
+            Some(parent) => tempfile::tempdir_in(&parent).unwrap(),
+        };
+
         let mut opts = Options::new();
         opts.metrics(true);
         // Enable rollback, so we can handle errors with commits to 2 databases.
@@ -140,7 +144,7 @@ where
     }
 }
 
-pub struct Node {
+pub struct RollupNode {
     storage_manager: StorageManager<sha2::Sha256>,
     storage_sender: tokio::sync::watch::Sender<NomtSessionBuilder<sha2::Sha256>>,
     // To keep channel alive
@@ -149,9 +153,9 @@ pub struct Node {
     finalization: u64,
 }
 
-impl Node {
-    pub fn new() -> Self {
-        let mut storage_manager = StorageManager::new();
+impl RollupNode {
+    pub fn new(temp_in: Option<String>) -> Self {
+        let mut storage_manager = StorageManager::new(temp_in);
         let (init_key, init_storage) = storage_manager.crate_next_storage();
         let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
 
