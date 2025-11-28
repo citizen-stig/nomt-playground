@@ -97,9 +97,15 @@ where
     }
 
     pub fn crate_next_storage(&mut self) -> (u64, NomtSessionBuilder<H>) {
-        let refs = (self.last_commited_key..self.next_key)
+        tracing::debug!(
+            self.last_commited_key,
+            self.next_key,
+            "Creating new storage"
+        );
+        let refs = ((self.last_commited_key+1)..self.next_key)
             .rev()
             .collect::<Vec<u64>>();
+        tracing::debug!(?refs, "Creating new storage");
         let key = self.next_key;
         self.next_key += 1;
         (
@@ -109,11 +115,15 @@ where
     }
 
     pub fn save_change_set(&mut self, key: u64, overlay: Overlay) {
+        let root = overlay.root();
+        tracing::debug!(key, %root, "Saving change set");
         let mut snapshots = self.all_snapshots.write().unwrap();
         snapshots.insert(key, overlay);
+        tracing::debug!(key, %root, "Saved change set");
     }
 
     pub fn finalize(&mut self, key: u64) {
+        tracing::debug!(key, self.last_commited_key, "Finalizing..");
         if key != (self.last_commited_key + 1) {
             panic!("Only sequential commit is allowed");
         }
@@ -121,10 +131,12 @@ where
         let overlay = snapshots
             .remove(&key)
             .expect("Attempt to commit non-existent key");
-
+        let root = overlay.root();
+        tracing::debug!(key, %root, "Commiting");
         overlay.commit(&self.state_db).expect("Failed to commit");
 
         self.last_commited_key = key;
+        tracing::info!(self.last_commited_key, "Commited");
     }
 }
 
@@ -133,6 +145,7 @@ pub struct Node {
     storage_sender: tokio::sync::watch::Sender<NomtSessionBuilder<sha2::Sha256>>,
     // To keep channel alive
     _storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
+    #[allow(dead_code)]
     finalization: u64,
 }
 
