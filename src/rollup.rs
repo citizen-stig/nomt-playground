@@ -276,6 +276,12 @@ impl SequencerTask {
     }
 
     fn run(self) {
+        let seq_type = if self.with_strategic_sleeps {
+            "sleepy"
+        } else {
+            "fast"
+        };
+        let _span = tracing::info_span!("seq-loop", seq_type = seq_type).entered();
         use rand::Rng;
 
         loop {
