@@ -118,6 +118,7 @@ where
         )
     }
 
+    #[tracing::instrument(skip(self, overlay))]
     pub fn save_change_set(&mut self, key: u64, overlay: Overlay) {
         let root = overlay.root();
         tracing::debug!(key, %root, "Saving change set");
@@ -126,7 +127,9 @@ where
         tracing::debug!(key, %root, "Saved change set");
     }
 
+    #[tracing::instrument(skip(self`))]
     pub fn finalize(&mut self, key: u64) {
+        let start = std::time::Instant::now();
         tracing::debug!(key, self.last_commited_key, "Finalizing..");
         if key != (self.last_commited_key + 1) {
             panic!("Only sequential commit is allowed");
@@ -140,7 +143,8 @@ where
         overlay.commit(&self.state_db).expect("Failed to commit");
 
         self.last_commited_key = key;
-        tracing::info!(self.last_commited_key, "Commited");
+
+        tracing::info!(self.last_commited_key, time = ?start.elapsed(), "Commited");
     }
 }
 
@@ -243,6 +247,7 @@ fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
 pub struct SequencerTask {
     storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
     data_sender: std::sync::mpsc::Sender<Vec<(KeyPath, KeyReadWrite)>>,
+    strategic_sleeps: bool,
 }
 
 impl SequencerTask {
@@ -253,6 +258,7 @@ impl SequencerTask {
         let task = Self {
             storage_receiver,
             data_sender,
+            strategic_sleeps: false,
         };
 
         std::thread::spawn(move || {
@@ -264,12 +270,13 @@ impl SequencerTask {
         use rand::Rng;
 
         loop {
-            // Sleep randomly between 0 and 100ms
-            let sleep_duration_1 = rand::rng().random_range(0..=30);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_duration_1));
+            if self.strategic_sleeps {
+                let sleep_duration_1 = rand::rng().random_range(0..=30);
+                std::thread::sleep(std::time::Duration::from_millis(sleep_duration_1));
+            }
 
             // Generate random keys
-            let num_writes = rand::rng().random_range(1..=10);
+            let num_writes = rand::rng().random_range(1..=2000);
             let data = generate_random_writes(num_writes);
 
             // Get current storage from the receiver
@@ -283,8 +290,10 @@ impl SequencerTask {
                     continue;
                 }
             };
-            let sleep_duration_2 = rand::rng().random_range(0..=50);
-            std::thread::sleep(std::time::Duration::from_millis(sleep_duration_2));
+            if self.strategic_sleeps {
+                let sleep_duration_2 = rand::rng().random_range(0..=200);
+                std::thread::sleep(std::time::Duration::from_millis(sleep_duration_2));
+            }
 
             // Finish session
             let finished_session = match session.finish(data.clone()) {
