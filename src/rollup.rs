@@ -102,7 +102,7 @@ where
             self.next_key,
             "Creating new storage"
         );
-        let refs = ((self.last_commited_key+1)..self.next_key)
+        let refs = ((self.last_commited_key + 1)..self.next_key)
             .rev()
             .collect::<Vec<u64>>();
         tracing::debug!(?refs, "Creating new storage");
@@ -188,8 +188,14 @@ impl Node {
             let (key, storage) = self.storage_manager.crate_next_storage();
             let change_set = {
                 let session = storage.begin_session().expect("Failed to start session");
-                let data = generate_random_writes(10);
+                let prev_root = session.prev_root();
+                let writes = 10;
+                tracing::debug!(num = writes, %prev_root, "Session has started. Generating writes");
+                let data = generate_random_writes(writes);
+                tracing::info!("Finishing session");
                 let finished_session = session.finish(data).unwrap();
+                let next_root = finished_session.root();
+                tracing::info!(block_number, %prev_root, %next_root, "Session is finished, converting into overlay");
                 finished_session.into_overlay()
             };
             self.storage_sender.send(storage.clone()).unwrap();
@@ -202,7 +208,7 @@ impl Node {
 
 fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
     use rand::Rng;
-    let mut result = Vec::with_capacity(num);
+    let mut result: Vec<(KeyPath, KeyReadWrite)> = Vec::with_capacity(num);
     let mut rng = rand::rng();
 
     for _ in 0..num {
@@ -210,6 +216,8 @@ fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
         let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
         result.push((key.into(), KeyReadWrite::Write(Some(value))));
     }
+
+    result.sort_by(|k1, k2| k1.0.cmp(&k2.0));
 
     result
 }
