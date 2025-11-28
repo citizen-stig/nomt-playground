@@ -1,6 +1,7 @@
 use nomt::hasher::BinaryHasher;
 use nomt::trie::KeyPath;
 use nomt::{KeyReadWrite, Nomt, Options, Overlay, SessionParams, WitnessMode};
+use rand::Rng;
 use sha2::digest;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -124,16 +125,16 @@ where
     #[tracing::instrument(skip(self, overlay))]
     pub fn save_change_set(&mut self, key: u64, overlay: Overlay) {
         let root = overlay.root();
-        tracing::debug!(key, %root, "Saving change set");
+        tracing::debug!(%root, "Saving change set");
         let mut snapshots = self.all_snapshots.write().unwrap();
         snapshots.insert(key, overlay);
-        tracing::debug!(key, %root, "Saved change set");
+        tracing::debug!(%root, "Saved change set");
     }
 
     #[tracing::instrument(skip(self))]
     pub fn finalize(&mut self, key: u64) {
         let start = std::time::Instant::now();
-        tracing::debug!(key, self.last_commited_key, "Finalizing..");
+        tracing::debug!(self.last_commited_key, "Finalizing..");
         if key != (self.last_commited_key + 1) {
             panic!("Only sequential commit is allowed");
         }
@@ -142,7 +143,7 @@ where
             .remove(&key)
             .expect("Attempt to commit non-existent key");
         let root = overlay.root();
-        tracing::debug!(key, %root, "Commiting");
+        tracing::debug!(%root, "Commiting");
         overlay.commit(&self.state_db).expect("Failed to commit");
 
         self.last_commited_key = key;
@@ -157,12 +158,16 @@ pub struct RollupNode {
     // To keep the channel alive
     _storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
     data_receiver: std::sync::mpsc::Receiver<Vec<(KeyPath, KeyReadWrite)>>,
-    #[allow(dead_code)]
-    finalization: u64,
+    finalization_probability: u8,
 }
 
 impl RollupNode {
-    pub fn new(temp_in: Option<String>, fast_sequencers: usize, sleepy_sequencers: usize) -> Self {
+    pub fn new(
+        temp_in: Option<String>,
+        fast_sequencers: usize,
+        sleepy_sequencers: usize,
+        finalization_probability: u8,
+    ) -> Self {
         let mut storage_manager = StorageManager::new(temp_in);
         let (init_key, init_storage) = storage_manager.crate_next_storage();
         let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
@@ -192,7 +197,7 @@ impl RollupNode {
             storage_sender,
             _storage_receiver: storage_receiver,
             data_receiver,
-            finalization: 0,
+            finalization_probability,
         }
     }
 
@@ -201,6 +206,7 @@ impl RollupNode {
     ///  - Different finalization, and sometimes skip finalizing and then finalize 2 times in a row.
     ///  - Extend reads/writes with different keys (existing, etc)
     pub fn run(mut self, blocks: usize) {
+        let mut rng = rand::rng();
         for block_number in 0..blocks {
             tracing::info!(block_number, "Processing block");
 
@@ -229,25 +235,28 @@ impl RollupNode {
                 .storage_manager
                 .create_storage_for_existing_key(key + 1);
             self.storage_sender.send(new_storage).unwrap();
-            // TODO: Strategic sleep here?
-            self.storage_manager.finalize(key);
+            let n = rng.random_range(0u8..=100);
+            if n > self.finalization_probability {
+                for k in self.storage_manager.last_commited_key + 1..=key {
+                    self.storage_manager.finalize(k);
+                }
+            } else {
+                tracing::debug!("Skipping finalization here");
+            }
         }
         tracing::info!("Done");
     }
 }
 
-fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
-    use rand::Rng;
-    let mut result: Vec<(KeyPath, KeyReadWrite)> = Vec::with_capacity(num);
+fn generate_random_writes(num: usize) -> Vec<(KeyPath, Vec<u8>)> {
+    let mut result = Vec::with_capacity(num);
     let mut rng = rand::rng();
 
     for _ in 0..num {
         let key: [u8; 32] = rng.random();
         let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
-        result.push((key.into(), KeyReadWrite::Write(Some(value))));
+        result.push((key.into(), value));
     }
-
-    result.sort_by(|k1, k2| k1.0.cmp(&k2.0));
 
     result
 }
@@ -292,7 +301,7 @@ impl SequencerTask {
 
             // Generate random keys
             let num_writes = rand::rng().random_range(1..=2000);
-            let data = generate_random_writes(num_writes);
+            let raw_generated_data = generate_random_writes(num_writes);
 
             // Get current storage from the receiver
             let storage = self.storage_receiver.borrow().clone();
@@ -305,6 +314,28 @@ impl SequencerTask {
                     continue;
                 }
             };
+
+            let mut data = Vec::with_capacity(raw_generated_data.len());
+
+            for (key, raw_value) in raw_generated_data {
+                if rand::rng().random_bool(0.3) {
+                    let existing_data = session.read(key).unwrap();
+                    if rand::rng().random_bool(0.1) {
+                        // Deletion
+                        data.push((key, KeyReadWrite::ReadThenWrite(existing_data, None)));
+                    } else {
+                        data.push((
+                            key,
+                            KeyReadWrite::ReadThenWrite(existing_data, Some(raw_value)),
+                        ))
+                    }
+                } else {
+                    data.push((key, KeyReadWrite::Write(Some(raw_value))))
+                }
+            }
+
+            data.sort_by(|k1, k2| k1.0.cmp(&k2.0));
+
             if self.with_strategic_sleeps {
                 let sleep_duration_2 = rand::rng().random_range(0..=200);
                 std::thread::sleep(std::time::Duration::from_millis(sleep_duration_2));

@@ -19,6 +19,9 @@ struct Args {
     /// Number of sequencer background tasks
     #[arg(long, default_value = "2")]
     sleepy_sequencers: usize,
+    /// Probability of finalization (0-100)
+    #[arg(long, default_value = "80")]
+    finalization_probability: u8,
 }
 
 #[tokio::main]
@@ -32,6 +35,7 @@ async fn main() {
         args.storage_path,
         args.fast_sequencers,
         args.sleepy_sequencers,
+        args.finalization_probability,
     );
     node.run(args.number_of_blocks);
     tracing::info!("Rollup emulator finished");
