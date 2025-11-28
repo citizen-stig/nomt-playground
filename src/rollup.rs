@@ -106,16 +106,19 @@ where
             self.next_key,
             "Creating new storage"
         );
-        let refs = ((self.last_commited_key + 1)..self.next_key)
+
+        let key = self.next_key;
+        let storage = self.create_storage_for_existing_key(key);
+        self.next_key += 1;
+        (key, storage)
+    }
+
+    pub fn create_storage_for_existing_key(&self, key: u64) -> NomtSessionBuilder<H> {
+        let refs = ((self.last_commited_key + 1)..key)
             .rev()
             .collect::<Vec<u64>>();
-        tracing::debug!(?refs, "Creating new storage");
-        let key = self.next_key;
-        self.next_key += 1;
-        (
-            key,
-            NomtSessionBuilder::new(self.state_db.clone(), refs, self.all_snapshots.clone()),
-        )
+        tracing::debug!(?refs, "Creating storage");
+        NomtSessionBuilder::new(self.state_db.clone(), refs, self.all_snapshots.clone())
     }
 
     #[tracing::instrument(skip(self, overlay))]
@@ -193,7 +196,6 @@ impl RollupNode {
 
     /// Initial version.
     /// TODO:
-    ///  - Create new storage between save and finalize, and send it there.
     ///  - Different finalization, and sometimes skip finalizing and then finalize 2 times in a row.
     ///  - Extend reads/writes with different keys (existing, etc)
     pub fn run(mut self, blocks: usize) {
@@ -220,8 +222,12 @@ impl RollupNode {
                 tracing::info!(block_number, %prev_root, %next_root, "Session is finished, converting into overlay");
                 finished_session.into_overlay()
             };
-            self.storage_sender.send(storage.clone()).unwrap();
             self.storage_manager.save_change_set(key, change_set);
+            let new_storage = self
+                .storage_manager
+                .create_storage_for_existing_key(key + 1);
+            self.storage_sender.send(new_storage).unwrap();
+            // TODO: Strategic sleep here?
             self.storage_manager.finalize(key);
         }
         tracing::info!("Done");
