@@ -1,13 +1,13 @@
 use nomt::hasher::BinaryHasher;
-use nomt::{Nomt, Overlay, SessionParams, WitnessMode};
+use nomt::trie::KeyPath;
+use nomt::{KeyReadWrite, Nomt, Options, Overlay, SessionParams, WitnessMode};
 use sha2::digest;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
-// TODO: replace K with u64
 
 // Storage
-
+#[derive(Clone)]
 pub struct NomtSessionBuilder<H> {
     state_db: Arc<Nomt<BinaryHasher<H>>>,
     relevant_snapshot_refs: Vec<u64>,
@@ -64,9 +64,11 @@ where
 }
 
 pub struct StorageManager<H> {
-    dir: TempDir,
+    _dir: TempDir,
     state_db: Arc<Nomt<BinaryHasher<H>>>,
     all_snapshots: Arc<RwLock<HashMap<u64, Overlay>>>,
+    last_commited_key: u64,
+    next_key: u64,
 }
 
 impl<H> StorageManager<H>
@@ -75,6 +77,128 @@ where
 {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
-        todo!()
+        let mut opts = Options::new();
+        opts.metrics(true);
+        // Enable rollback, so we can handle errors with commits to 2 databases.
+        opts.rollback(true);
+        opts.max_rollback_log_len(1);
+        opts.commit_concurrency(6);
+        opts.hashtable_buckets(1_000_000);
+        opts.preallocate_ht(false);
+        opts.path(dir.path().join("kernel_nomt_db"));
+        let nomt = Nomt::<BinaryHasher<H>>::open(opts).unwrap();
+        Self {
+            _dir: dir,
+            state_db: Arc::new(nomt),
+            all_snapshots: Arc::new(Default::default()),
+            last_commited_key: 0,
+            next_key: 1,
+        }
+    }
+
+    pub fn crate_next_storage(&mut self) -> (u64, NomtSessionBuilder<H>) {
+        let refs = (self.last_commited_key..self.next_key)
+            .rev()
+            .collect::<Vec<u64>>();
+        let key = self.next_key;
+        self.next_key += 1;
+        (
+            key,
+            NomtSessionBuilder::new(self.state_db.clone(), refs, self.all_snapshots.clone()),
+        )
+    }
+
+    pub fn save_change_set(&mut self, key: u64, overlay: Overlay) {
+        let mut snapshots = self.all_snapshots.write().unwrap();
+        snapshots.insert(key, overlay);
+    }
+
+    pub fn finalize(&mut self, key: u64) {
+        if key != (self.last_commited_key + 1) {
+            panic!("Only sequential commit is allowed");
+        }
+        let mut snapshots = self.all_snapshots.write().unwrap();
+        let overlay = snapshots
+            .remove(&key)
+            .expect("Attempt to commit non-existent key");
+
+        overlay.commit(&self.state_db).expect("Failed to commit");
+
+        self.last_commited_key = key;
     }
 }
+
+pub struct Node {
+    storage_manager: StorageManager<sha2::Sha256>,
+    storage_sender: tokio::sync::watch::Sender<NomtSessionBuilder<sha2::Sha256>>,
+    // To keep channel alive
+    _storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
+    finalization: u64,
+}
+
+impl Node {
+    pub fn new() -> Self {
+        let mut storage_manager = StorageManager::new();
+        let (init_key, init_storage) = storage_manager.crate_next_storage();
+        let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
+
+        {
+            let genesis_session = init_storage
+                .begin_session()
+                .expect("Failed to begin genesis session");
+            let finished_session = genesis_session
+                .finish(Vec::new())
+                .expect("Failed to finish genesis session");
+            let overlay = finished_session.into_overlay();
+            storage_manager.save_change_set(init_key, overlay);
+            storage_manager.finalize(init_key);
+        }
+
+        Self {
+            storage_manager,
+            storage_sender,
+            _storage_receiver: storage_receiver,
+            finalization: 0,
+        }
+    }
+
+    /// Initial version.
+    /// TODO:
+    ///  - Start X sequencer tasks
+    ///  - Create new storage between save and finalize, and send it there.
+    ///  - Different finalization, and sometimes skip finalizing and then finalize 2 times in a row.
+    ///  - Extend reads/writes with different keys (existing, etc)
+    ///  - Accept data from sequencers sometimes, so we hit same keys from both threads
+    pub fn run(mut self, blocks: usize) {
+        for block_number in 0..blocks {
+            tracing::info!(block_number, "Processing block");
+            let (key, storage) = self.storage_manager.crate_next_storage();
+            let change_set = {
+                let session = storage.begin_session().expect("Failed to start session");
+                let data = generate_random_writes(10);
+                let finished_session = session.finish(data).unwrap();
+                finished_session.into_overlay()
+            };
+            self.storage_sender.send(storage.clone()).unwrap();
+            self.storage_manager.save_change_set(key, change_set);
+            self.storage_manager.finalize(key);
+        }
+        tracing::info!("Done");
+    }
+}
+
+fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
+    use rand::Rng;
+    let mut result = Vec::with_capacity(num);
+    let mut rng = rand::rng();
+
+    for _ in 0..num {
+        let key: [u8; 32] = rng.random();
+        let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+        result.push((key.into(), KeyReadWrite::Write(Some(value))));
+    }
+
+    result
+}
+
+pub struct SequencerTask {}

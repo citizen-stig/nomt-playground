@@ -13,6 +13,11 @@ sha2 = "0.10.8"
 hex = "0.4.3"
 tokio = { version = "1.45.1", features = ["full"] }
 tracing = { version = "0.1.43" }
+rand = { version = "0.9.2" }
 tracing-subscriber = { version = "0.3.22" }
+
+[[bin]]
+name = "rollup_emulator"
+path = "src/bin/rollup_emulator.rs"
 
 [dev-dependencies]
