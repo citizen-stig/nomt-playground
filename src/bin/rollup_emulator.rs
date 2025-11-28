@@ -26,6 +26,13 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Exit the whole process if any thread panics
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        std::process::exit(1);
+    }));
+
     tracing_subscriber::fmt::init();
 
     let args = Args::parse();

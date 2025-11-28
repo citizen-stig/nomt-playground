@@ -203,8 +203,8 @@ impl RollupNode {
 
     /// Initial version.
     /// TODO:
-    ///  - Different finalization, and sometimes skip finalizing and then finalize 2 times in a row.
     ///  - Extend reads/writes with different keys (existing, etc)
+    ///     - Currently it tries to read some random key, but probability is low. 
     pub fn run(mut self, blocks: usize) {
         let mut rng = rand::rng();
         for block_number in 0..blocks {
