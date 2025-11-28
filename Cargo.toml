@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-#nomt = { version = "1.0.0-preview", features = ["borsh", "sha2-hasher"] }
-nomt = { git = "https://github.com/thrumdev/nomt.git", rev = "cdf44a5379a49a4c977ea82414f23d065017af96", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
+nomt = { version = "1.0.2", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
+anyhow = { version = "1.0.100" }
 
 
 tempfile = "3.19.1"
 sha2 = "0.10.8"
 hex = "0.4.3"
 tokio = { version = "1.45.1", features = ["full"] }
+tracing = { version = "0.1.43" }
+tracing-subscriber = { version = "0.3.22" }
 
 [dev-dependencies]
