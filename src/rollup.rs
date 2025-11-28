@@ -2,7 +2,7 @@ use nomt::hasher::BinaryHasher;
 use nomt::trie::KeyPath;
 use nomt::{KeyReadWrite, Nomt, Options, Overlay, SessionParams, WitnessMode};
 use rand::Rng;
-use sha2::digest;
+use sha2::{Digest, digest};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
@@ -204,7 +204,7 @@ impl RollupNode {
     /// Initial version.
     /// TODO:
     ///  - Extend reads/writes with different keys (existing, etc)
-    ///     - Currently it tries to read some random key, but probability is low. 
+    ///     - Currently it tries to read some random key, but probability is low.
     pub fn run(mut self, blocks: usize) {
         let mut rng = rand::rng();
         for block_number in 0..blocks {
@@ -248,14 +248,25 @@ impl RollupNode {
     }
 }
 
-fn generate_random_writes(num: usize) -> Vec<(KeyPath, Vec<u8>)> {
-    let mut result = Vec::with_capacity(num);
+fn generate_random_writes(new: usize, probably_existing: usize) -> Vec<(KeyPath, Vec<u8>)> {
+    let mut result = Vec::with_capacity(new);
     let mut rng = rand::rng();
 
-    for _ in 0..num {
+    for _ in 0..new {
         let key: [u8; 32] = rng.random();
         let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
         result.push((key.into(), value));
+    }
+
+    let mut existing_key = [0u8; 32];
+    for _ in 0..probably_existing {
+        existing_key[0] = rng.random::<u8>();
+        existing_key[1] = rng.random::<u8>();
+        let key: KeyPath = sha2::Sha256::digest(&existing_key).into();
+        if result.iter().find(|(k, _)| k == &key).is_none() {
+            let value: Vec<u8> = (0..32).map(|_| rng.random::<u8>()).collect();
+            result.push((key, value));
+        }
     }
 
     result
@@ -301,7 +312,8 @@ impl SequencerTask {
 
             // Generate random keys
             let num_writes = rand::rng().random_range(1..=2000);
-            let raw_generated_data = generate_random_writes(num_writes);
+            let num_reads = rand::rng().random_range(1..=100);
+            let raw_generated_data = generate_random_writes(num_writes, num_reads);
 
             // Get current storage from the receiver
             let storage = self.storage_receiver.borrow().clone();
