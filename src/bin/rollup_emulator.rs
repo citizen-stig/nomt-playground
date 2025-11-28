@@ -14,8 +14,11 @@ struct Args {
     storage_path: Option<String>,
 
     /// Number of sequencer background tasks
-    #[arg(long, default_value = "5")]
-    sequencers: usize,
+    #[arg(long, default_value = "10")]
+    fast_sequencers: usize,
+    /// Number of sequencer background tasks
+    #[arg(long, default_value = "2")]
+    sleepy_sequencers: usize,
 }
 
 #[tokio::main]
@@ -25,7 +28,11 @@ async fn main() {
     let args = Args::parse();
 
     tracing::info!("Starting rollup emulator");
-    let node = RollupNode::new(args.storage_path, args.sequencers);
+    let node = RollupNode::new(
+        args.storage_path,
+        args.fast_sequencers,
+        args.sleepy_sequencers,
+    );
     node.run(args.number_of_blocks);
     tracing::info!("Rollup emulator finished");
 }

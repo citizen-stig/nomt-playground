@@ -162,7 +162,7 @@ pub struct RollupNode {
 }
 
 impl RollupNode {
-    pub fn new(temp_in: Option<String>, num_sequencers: usize) -> Self {
+    pub fn new(temp_in: Option<String>, fast_sequencers: usize, sleepy_sequencers: usize) -> Self {
         let mut storage_manager = StorageManager::new(temp_in);
         let (init_key, init_storage) = storage_manager.crate_next_storage();
         let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
@@ -180,9 +180,11 @@ impl RollupNode {
             storage_manager.finalize(init_key);
         }
 
-        // Spawn sequencer tasks
-        for _ in 0..num_sequencers {
-            SequencerTask::spawn(storage_receiver.clone(), data_sender.clone());
+        for _ in 0..fast_sequencers {
+            SequencerTask::spawn(storage_receiver.clone(), data_sender.clone(), false);
+        }
+        for _ in 0..sleepy_sequencers {
+            SequencerTask::spawn(storage_receiver.clone(), data_sender.clone(), true);
         }
 
         Self {
@@ -253,18 +255,19 @@ fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
 pub struct SequencerTask {
     storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
     data_sender: std::sync::mpsc::Sender<Vec<(KeyPath, KeyReadWrite)>>,
-    strategic_sleeps: bool,
+    with_strategic_sleeps: bool,
 }
 
 impl SequencerTask {
     pub fn spawn(
         storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
         data_sender: std::sync::mpsc::Sender<Vec<(KeyPath, KeyReadWrite)>>,
+        with_strategic_sleeps: bool,
     ) {
         let task = Self {
             storage_receiver,
             data_sender,
-            strategic_sleeps: false,
+            with_strategic_sleeps,
         };
 
         std::thread::spawn(move || {
@@ -276,7 +279,7 @@ impl SequencerTask {
         use rand::Rng;
 
         loop {
-            if self.strategic_sleeps {
+            if self.with_strategic_sleeps {
                 let sleep_duration_1 = rand::rng().random_range(0..=30);
                 std::thread::sleep(std::time::Duration::from_millis(sleep_duration_1));
             }
@@ -296,7 +299,7 @@ impl SequencerTask {
                     continue;
                 }
             };
-            if self.strategic_sleeps {
+            if self.with_strategic_sleeps {
                 let sleep_duration_2 = rand::rng().random_range(0..=200);
                 std::thread::sleep(std::time::Duration::from_millis(sleep_duration_2));
             }
