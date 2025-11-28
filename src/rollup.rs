@@ -331,6 +331,7 @@ impl SequencerTask {
 
             for (key, raw_value) in raw_generated_data {
                 if rand::rng().random_bool(0.3) {
+                    // In real sovereign rollup we never actually read from NOMT (all data is rocksdb)
                     let existing_data = session.read(key).unwrap();
                     if rand::rng().random_bool(0.1) {
                         // Deletion
