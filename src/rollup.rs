@@ -127,7 +127,7 @@ where
         tracing::debug!(key, %root, "Saved change set");
     }
 
-    #[tracing::instrument(skip(self`))]
+    #[tracing::instrument(skip(self))]
     pub fn finalize(&mut self, key: u64) {
         let start = std::time::Instant::now();
         tracing::debug!(key, self.last_commited_key, "Finalizing..");
@@ -151,7 +151,7 @@ where
 pub struct RollupNode {
     storage_manager: StorageManager<sha2::Sha256>,
     storage_sender: tokio::sync::watch::Sender<NomtSessionBuilder<sha2::Sha256>>,
-    // To keep channel alive
+    // To keep the channel alive
     _storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
     data_receiver: std::sync::mpsc::Receiver<Vec<(KeyPath, KeyReadWrite)>>,
     #[allow(dead_code)]
@@ -159,7 +159,7 @@ pub struct RollupNode {
 }
 
 impl RollupNode {
-    pub fn new(temp_in: Option<String>) -> Self {
+    pub fn new(temp_in: Option<String>, num_sequencers: usize) -> Self {
         let mut storage_manager = StorageManager::new(temp_in);
         let (init_key, init_storage) = storage_manager.crate_next_storage();
         let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
@@ -177,8 +177,8 @@ impl RollupNode {
             storage_manager.finalize(init_key);
         }
 
-        // Spawn 5 sequencer tasks
-        for _ in 0..5 {
+        // Spawn sequencer tasks
+        for _ in 0..num_sequencers {
             SequencerTask::spawn(storage_receiver.clone(), data_sender.clone());
         }
 

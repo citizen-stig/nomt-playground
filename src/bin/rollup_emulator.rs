@@ -12,6 +12,10 @@ struct Args {
     /// Path to the storage directory
     #[arg(short, long)]
     storage_path: Option<String>,
+
+    /// Number of sequencer background tasks
+    #[arg(long, default_value = "5")]
+    sequencers: usize,
 }
 
 #[tokio::main]
@@ -21,7 +25,7 @@ async fn main() {
     let args = Args::parse();
 
     tracing::info!("Starting rollup emulator");
-    let node = RollupNode::new(args.storage_path);
+    let node = RollupNode::new(args.storage_path, args.sequencers);
     node.run(args.number_of_blocks);
     tracing::info!("Rollup emulator finished");
 }
