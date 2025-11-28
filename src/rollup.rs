@@ -149,6 +149,7 @@ pub struct RollupNode {
     storage_sender: tokio::sync::watch::Sender<NomtSessionBuilder<sha2::Sha256>>,
     // To keep channel alive
     _storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
+    data_receiver: std::sync::mpsc::Receiver<Vec<(KeyPath, KeyReadWrite)>>,
     #[allow(dead_code)]
     finalization: u64,
 }
@@ -158,6 +159,7 @@ impl RollupNode {
         let mut storage_manager = StorageManager::new(temp_in);
         let (init_key, init_storage) = storage_manager.crate_next_storage();
         let (storage_sender, storage_receiver) = tokio::sync::watch::channel(init_storage.clone());
+        let (data_sender, data_receiver) = std::sync::mpsc::channel();
 
         {
             let genesis_session = init_storage
@@ -171,31 +173,43 @@ impl RollupNode {
             storage_manager.finalize(init_key);
         }
 
+        // Spawn 5 sequencer tasks
+        for _ in 0..5 {
+            SequencerTask::spawn(storage_receiver.clone(), data_sender.clone());
+        }
+
         Self {
             storage_manager,
             storage_sender,
             _storage_receiver: storage_receiver,
+            data_receiver,
             finalization: 0,
         }
     }
 
     /// Initial version.
     /// TODO:
-    ///  - Start X sequencer tasks
     ///  - Create new storage between save and finalize, and send it there.
     ///  - Different finalization, and sometimes skip finalizing and then finalize 2 times in a row.
     ///  - Extend reads/writes with different keys (existing, etc)
-    ///  - Accept data from sequencers sometimes, so we hit same keys from both threads
     pub fn run(mut self, blocks: usize) {
         for block_number in 0..blocks {
             tracing::info!(block_number, "Processing block");
+
+            // Receive data from sequencers
+            let data = match self.data_receiver.recv() {
+                Ok(data) => data,
+                Err(e) => {
+                    tracing::error!("Failed to receive data from sequencers: {:?}", e);
+                    break;
+                }
+            };
+
             let (key, storage) = self.storage_manager.crate_next_storage();
             let change_set = {
                 let session = storage.begin_session().expect("Failed to start session");
                 let prev_root = session.prev_root();
-                let writes = 10;
-                tracing::debug!(num = writes, %prev_root, "Session has started. Generating writes");
-                let data = generate_random_writes(writes);
+                tracing::debug!(num = data.len(), %prev_root, "Session has started with data from sequencer");
                 tracing::info!("Finishing session");
                 let finished_session = session.finish(data).unwrap();
                 let next_root = finished_session.root();
@@ -226,4 +240,70 @@ fn generate_random_writes(num: usize) -> Vec<(KeyPath, KeyReadWrite)> {
     result
 }
 
-pub struct SequencerTask {}
+pub struct SequencerTask {
+    storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
+    data_sender: std::sync::mpsc::Sender<Vec<(KeyPath, KeyReadWrite)>>,
+}
+
+impl SequencerTask {
+    pub fn spawn(
+        storage_receiver: tokio::sync::watch::Receiver<NomtSessionBuilder<sha2::Sha256>>,
+        data_sender: std::sync::mpsc::Sender<Vec<(KeyPath, KeyReadWrite)>>,
+    ) {
+        let task = Self {
+            storage_receiver,
+            data_sender,
+        };
+
+        std::thread::spawn(move || {
+            task.run();
+        });
+    }
+
+    fn run(self) {
+        use rand::Rng;
+
+        loop {
+            // Sleep randomly between 0 and 100ms
+            let sleep_duration_1 = rand::rng().random_range(0..=30);
+            std::thread::sleep(std::time::Duration::from_millis(sleep_duration_1));
+
+            // Generate random keys
+            let num_writes = rand::rng().random_range(1..=10);
+            let data = generate_random_writes(num_writes);
+
+            // Get current storage from the receiver
+            let storage = self.storage_receiver.borrow().clone();
+
+            // Start session
+            let session = match storage.begin_session() {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to begin session: {:?}", e);
+                    continue;
+                }
+            };
+            let sleep_duration_2 = rand::rng().random_range(0..=50);
+            std::thread::sleep(std::time::Duration::from_millis(sleep_duration_2));
+
+            // Finish session
+            let finished_session = match session.finish(data.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Failed to finish session: {:?}", e);
+                    continue;
+                }
+            };
+
+            // Print root
+            let root = finished_session.root();
+            tracing::info!(%root, "Sequencer session finished");
+
+            // Submit data to sender channel
+            if self.data_sender.send(data).is_err() {
+                tracing::info!("Data channel closed, stopping sequencer task");
+                break;
+            }
+        }
+    }
+}
