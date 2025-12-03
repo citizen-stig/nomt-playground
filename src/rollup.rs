@@ -34,7 +34,7 @@ where
     #[tracing::instrument(skip(self))]
     pub fn begin_session(&self) -> anyhow::Result<nomt::Session<BinaryHasher<H>>> {
         let start = std::time::Instant::now();
-        let params = {
+        let session = {
             let mut overlays = Vec::with_capacity(self.relevant_snapshot_refs.len());
             let snapshots = self.all_snapshots.read().expect("Snapshots lock poisoned");
             for overlay_ref in &self.relevant_snapshot_refs {
@@ -46,7 +46,7 @@ where
                 };
                 overlays.push(state_overlay);
             }
-            SessionParams::default()
+            let params = SessionParams::default()
                 .overlay(overlays)
                 .map_err(|e| {
                     anyhow::anyhow!(
@@ -54,9 +54,10 @@ where
                         e
                     )
                 })?
-                .witness_mode(WitnessMode::read_write())
+                .witness_mode(WitnessMode::read_write());
+            self.state_db.begin_session(params)
         };
-        let session = self.state_db.begin_session(params);
+
         let init_time = start.elapsed();
         let overlays = self.relevant_snapshot_refs.len();
         tracing::debug!(?init_time, overlays, "Session has been initialized");

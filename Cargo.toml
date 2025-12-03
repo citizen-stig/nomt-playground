@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 nomt = { version = "1.0.2", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
+#nomt = { git = "https://github.com/thrumdev/nomt.git", branch = "gm_wip_some_fixes", default-features = false, features = ["borsh", "serde", "sha2-hasher", ] }
 anyhow = { version = "1.0.100" }
 
 
