@@ -22,6 +22,9 @@ struct Args {
     /// Probability of finalization (0-100)
     #[arg(long, default_value = "80")]
     finalization_probability: u8,
+    /// Number of simulation runs
+    #[arg(long, default_value = "1")]
+    simulation_runs: usize,
 }
 
 #[tokio::main]
@@ -37,13 +40,16 @@ async fn main() {
 
     let args = Args::parse();
 
-    tracing::info!("Starting rollup emulator");
-    let node = RollupNode::new(
-        args.storage_path,
-        args.fast_sequencers,
-        args.sleepy_sequencers,
-        args.finalization_probability,
-    );
-    node.run(args.number_of_blocks);
-    tracing::info!("Rollup emulator finished");
+    for run in 0..args.simulation_runs {
+        tracing::info!(run, total = args.simulation_runs, "Starting rollup emulator");
+        let node = RollupNode::new(
+            args.storage_path.clone(),
+            args.fast_sequencers,
+            args.sleepy_sequencers,
+            args.finalization_probability,
+        );
+        node.run(args.number_of_blocks);
+        tracing::info!(run, "Rollup emulator run finished");
+    }
+    tracing::info!("All simulation runs completed");
 }

@@ -149,7 +149,7 @@ where
 
         self.last_commited_key = key;
 
-        tracing::info!(self.last_commited_key, time = ?start.elapsed(), "Commited");
+        tracing::debug!(self.last_commited_key, time = ?start.elapsed(), "Commited");
     }
 }
 
@@ -209,7 +209,8 @@ impl RollupNode {
     pub fn run(mut self, blocks: usize) {
         let mut rng = rand::rng();
         for block_number in 0..blocks {
-            tracing::info!(block_number, "Processing block");
+            let _span = tracing::info_span!("block_loop", %block_number).entered();
+            tracing::info!("Start processing block");
 
             // Receive data from sequencers
             let data = match self.data_receiver.recv() {
@@ -224,11 +225,10 @@ impl RollupNode {
             let change_set = {
                 let session = storage.begin_session().expect("Failed to start session");
                 let prev_root = session.prev_root();
-                tracing::debug!(num = data.len(), %prev_root, "Session has started with data from sequencer");
-                tracing::info!("Finishing session");
+                tracing::debug!(num = data.len(), %prev_root, "Session has started with data from sequencer, finishing with data");
                 let finished_session = session.finish(data).unwrap();
                 let next_root = finished_session.root();
-                tracing::info!(block_number, %prev_root, %next_root, "Session is finished, converting into overlay");
+                tracing::debug!(block_number, %prev_root, %next_root, "Session is finished, converting into overlay");
                 finished_session.into_overlay()
             };
             self.storage_manager.save_change_set(key, change_set);
@@ -244,8 +244,8 @@ impl RollupNode {
             } else {
                 tracing::debug!("Skipping finalization here");
             }
+            tracing::info!("Block completed")
         }
-        tracing::info!("Done");
     }
 }
 
@@ -366,7 +366,7 @@ impl SequencerTask {
 
             // Print root
             let root = finished_session.root();
-            tracing::info!(%root, "Sequencer session finished");
+            tracing::debug!(%root, "Sequencer session finished");
 
             // Submit data to sender channel
             if self.data_sender.send(data).is_err() {

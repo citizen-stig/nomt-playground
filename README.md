@@ -28,7 +28,8 @@ cargo build --release
     -s /tmp/nomt_data \
     --fast-sequencers 10 \
     --sleepy-sequencers 2 \
-    --finalization-probability 80
+    --finalization-probability 80 \
+    --simulation-runs 5
 ```
 
 ### Options
@@ -40,6 +41,7 @@ cargo build --release
 | `--fast-sequencers`          | Fast sequencer task count   | 10       |
 | `--sleepy-sequencers`        | Slow sequencer task count   | 2        |
 | `--finalization-probability` | Finalization chance (0-100) | 80       |
+| `--simulation-runs`          | Number of simulation runs   | 1        |
 
 ### Enable Logging
 
