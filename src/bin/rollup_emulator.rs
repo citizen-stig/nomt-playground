@@ -41,6 +41,7 @@ async fn main() {
     let args = Args::parse();
 
     for run in 0..args.simulation_runs {
+        let _span = tracing::info_span!("simulation", %run).entered();
         tracing::info!(run, total = args.simulation_runs, "Starting rollup emulator");
         let node = RollupNode::new(
             args.storage_path.clone(),
